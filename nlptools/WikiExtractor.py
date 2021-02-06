@@ -2807,8 +2807,6 @@ def pages_from(input):
        # do not include pages containing Lsjbot
         if 'Lsjbot'  in line:
             page = ['xx','xx']
-            id = '0000' 
-            revid ='0000' 
             title ='0000' 
             ns = '0'
             yield (id, revid, title, ns,catSet, page)
