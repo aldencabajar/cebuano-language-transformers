@@ -651,6 +651,9 @@ class Extractor(object):
 
         if sum(len(line) for line in text) < options.min_text_length:
             return
+        # this ties back to changing titles to 0000 for articles made by Lsjbot  
+        if self.title == "0000":
+            return
 
         self.write_output(out, text)
 
@@ -2801,6 +2804,15 @@ def pages_from(input):
     title = None
     for line in input:
         if not isinstance(line, text_type): line = line.decode('utf-8')
+       # do not include pages containing Lsjbot
+        if 'Lsjbot'  in line:
+            page = ['xx','xx']
+            id = '0000' 
+            revid ='0000' 
+            title ='0000' 
+            ns = '0'
+            yield (id, revid, title, ns,catSet, page)
+
         if '<' not in line:  # faster than doing re.search()
             if inText:
                 page.append(line)
