@@ -2,8 +2,6 @@ import json
 import os
 import sys
 import pandas as pd
-import matplotlib.pyplot as plt 
-import matplotlib
 import numpy as np
 import re
 from tokenizers import normalizers, TextInputSequence, Tokenizer
@@ -70,7 +68,8 @@ if __name__ == "__main__":
 
     # define a trainer for the tokenizer
     trainer = BpeTrainer(vocab_size=25000, show_progress=True, 
-    initial_alphabet=ByteLevel.alphabet())
+    initial_alphabet=ByteLevel.alphabet(),
+    special_tokens=["<|endoftext|>"])
 
     for corpus, path in corpus_files.items():
         tokenizer = tokenizer_pipeline()
