@@ -58,6 +58,7 @@ def tokenizer_pipeline():
 
 if __name__ == "__main__":
     # preparing corpus for wiki 
+    en_vocab_size =50257
     wiki_txt = load_text_file_json('text/AA/wiki_00.json', 'text')
     write_text_file(wiki_txt, 'wiki-corpus.txt')
 
@@ -67,7 +68,7 @@ if __name__ == "__main__":
     } 
 
     # define a trainer for the tokenizer
-    trainer = BpeTrainer(vocab_size=25000, show_progress=True, 
+    trainer = BpeTrainer(vocab_size=en_vocab_size, show_progress=True, 
     initial_alphabet=ByteLevel.alphabet(),
     special_tokens=["<|endoftext|>"])
 
