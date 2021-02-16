@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # define a trainer for the tokenizer
     trainer = BpeTrainer(vocab_size=en_vocab_size, show_progress=True, 
     initial_alphabet=ByteLevel.alphabet(),
-    special_tokens=["<|endoftext|>"])
+    special_tokens=['<|endoftext|>', '<pad>'])
 
     for corpus, path in corpus_files.items():
         tokenizer = tokenizer_pipeline()
