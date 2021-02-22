@@ -102,7 +102,9 @@ def CreateDataset(ids, df_txt, tokenizer_lng, batch_size):
     # prepare tf datasets 
     def _dataset(ids, batch_size = None):
         df = Dataset.from_tensor_slices(ids)
-        df = df.shuffle(len(ids)).batch(batch_size)
+        df = df.shuffle(len(ids))
+        df = df.repeat()
+        df = df.batch(batch_size)
         df = df.map(
             lambda x: tf.py_function(PreprocessData, [x], 
             [tf.int32, tf.int32, tf.int32])
@@ -123,34 +125,6 @@ def train_test_split(num_examples, train_split = 0.8):
     test_ids = np.setdiff1d(np.arange(num_examples), train_ids)
     return train_ids, test_ids
 
-    
-    
-
-    # preprocessing routine 
-@tf.function
-def train_step(model, iterator):
-  """The step function for one training step"""
-
-  def step_fn(inputs):
-    """The computation to run on each TPU device."""
-    inp, labels, attn = inputs
-    with tf.GradientTape() as tape:
-      logits = model(input_ids= inp, attention_mask = attn)
-      loss = tfk.losses.sparse_categorical_crossentropy(
-          labels, logits, from_logits=True)
-      loss = tf.nn.compute_average_loss(loss, global_batch_size=batch_size)
-    grads = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(list(zip(grads, model.trainable_variables)))
-    training_loss.update_state(loss * strategy.num_replicas_in_sync)
-    training_accuracy.update_state(labels, logits)
-
-  strategy.run(step_fn, args=(next(iterator),))
-
-
-
-
-
-            
 if __name__ == '__main__':
 
     # parameters 
@@ -165,7 +139,7 @@ if __name__ == '__main__':
     steps = None 
     lr = int(1e-4)
     log = False
-    device = 'gpu'
+    device = 'tpu'
 
     if device == 'tpu':
         #initializing tpu
@@ -203,46 +177,61 @@ if __name__ == '__main__':
             lambda _: CreateDataset(train_ids, df_txt, tokenizer_lng, batch_size = per_replica_batch_size))
 
     else:
+        model = setup_model_finetuning(path_to_pretrained, tokenizer_en, tokenizer_lng)
         train_dataset = CreateDataset(train_ids, df_txt, tokenizer_lng, batch_size=train_batch_size)
-    
-    inp, lbl, attn = list(train_dataset.take(1))[0]
-    print(inp)
+
+ 
+
+    ###### MAIN TRAINING LOOP #########
+
+    # setup needed parameters, objects 
+    training_loss = tf.keras.metrics.Mean('training_loss', dtype=tf.float32)
+    training_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
+        'training_accuracy', dtype=tf.float32)
+    optimizer = tfk.optimizers.Adam(learning_rate = lr)
+
+    @tf.function
+    def train_step(iterator):
+        """The step function for one training step"""
+
+        def step_fn(inputs):
+            """The computation to run on each TPU device."""
+            inp, labels, attn = inputs
+            with tf.GradientTape() as tape:
+                results = model(input_ids= inp, attention_mask = attn)
+                loss = tfk.losses.sparse_categorical_crossentropy(
+                    labels, results.logits, from_logits=True)
+                loss = tf.nn.compute_average_loss(loss, global_batch_size=train_batch_size)
+                grads = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(list(zip(grads, model.trainable_variables)))
+
+            try:
+                _loss = loss * strategy.num_replicas_in_sync
+            except:
+                _loss = loss 
+            training_loss.update_state(_loss)
+            training_accuracy.update_state(labels, results.logits)
+
+        if device == 'tpu':
+            strategy.run(step_fn, args=(next(iterator),))
+        else:
+            step_fn(next(iterator))
+
+    if steps is None:
+        steps = train_ids.shape[0] // train_batch_size 
 
 
-
-
-
-
-"""
-# Training routine ==============================================
-# evaluation metrics
-acc = tfk.metrics.SparseCategoricalAccuracy()
-def cross_entropy_loss(y_true,y_pred):
-    return(tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(y_true, y_pred)))
-
-if steps is None:
-    steps = train_ids.
-    shape[0] // train_batch_size
-optimizer = tfk.optimizers.Adam(learning_rate = lr)
-
-
-for i in range(epochs):
-    pbar = tqdm(df_train.take(steps))
-    for j, (inp, label, attn) in enumerate(pbar):
-        batch_losses = []
-        with tf.GradientTape() as tape:
-            results = model(input_ids = inp, attention_mask = label)
-            loss = cross_entropy_loss(label, results.logits)
-
-            grads = tape.gradient(loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, model.trainable_variables))
-        # get accuracy
-        acc.update_state(label, results.logits)
-
-        pbar.set_description(f"Epoch {i + 1}, batch {j + 1}")
-        pbar.set_postfix({'cross-entropy loss': loss.numpy(), 
-                        'accuracy':acc.result().numpy()})
-        acc.reset_states()
-        """
-
+    for i in range(epochs):
+        _iterator = iter(train_dataset)
+        pbar = tqdm(range(steps))
+        for j in pbar:
+            train_step(_iterator)
+            pbar.set_description(f"Epoch {i + 1}, step {j + 1}")
+            pbar.set_postfix(
+                {
+                 'cross-entropy loss': float(training_loss.result()), 
+                 'accuracy': float(training_accuracy.result())
+                 }
+             )
+            training_accuracy.reset_states()
+            training_loss.reset_states()
