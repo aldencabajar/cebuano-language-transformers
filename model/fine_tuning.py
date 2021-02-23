@@ -3,6 +3,7 @@ import tensorflow as tf
 import re
 import sys
 from tensorflow.data import Dataset
+from tensorflow.sparse import to_dense as td
 import tensorflow.keras as tfk
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from transformers import TFGPT2LMHeadModel, GPT2TokenizerFast, GPT2Config
@@ -132,6 +133,7 @@ if __name__ == '__main__':
     path_to_tokenizer_lng = 'model/oscar-corpus-tokenizer.json'
     path_to_txt = 'shuff-dedup/ceb/ceb_dedup.txt'
     path_to_pretrained = 'model/en_pretrained_gpt2'
+    path_to_tfr = 'model/train_oscar_corpus.tfrecords'
     train_split = 0.8
     train_batch_size = 32 
     test_batch_size = 1
@@ -151,7 +153,6 @@ if __name__ == '__main__':
 
         strategy = tf.distribute.TPUStrategy(resolver)
 
-        
 
     # load models
     tokenizer_en = GPT2TokenizerFast.from_pretrained(path_to_tokenizer_en)
@@ -161,10 +162,19 @@ if __name__ == '__main__':
     df_txt = setup_examples(path_to_txt)
     train_ids, test_ids = train_test_split(df_txt.shape[0])
 
+    def get_dataset(batch_size):
+        dataset = tf.data.TFRecordDataset(path_to_tfr).map(decode) 
+        dataset = train_dataset.map(lambda x, y, z: (td(x), td(y), td(z)))
+        dataset = dataset.shuffle(10000).repeat()
+        dataset = dataset.padded_batch(batch_size)
+
+        return dataset
+       
+
     if device == 'tpu':
         with strategy.scope():
             model = setup_model_finetuning(path_to_pretrained, tokenizer_en, tokenizer_lng)
-            optimizer = tf.keras.optimizers.Adam()
+            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             training_loss = tf.keras.metrics.Mean('training_loss', dtype=tf.float32)
             training_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
                 'training_accuracy', dtype=tf.float32)
@@ -174,21 +184,21 @@ if __name__ == '__main__':
         per_replica_batch_size = train_batch_size // strategy.num_replicas_in_sync
 
         train_dataset = strategy.experimental_distribute_datasets_from_function(
-            lambda _: CreateDataset(train_ids, df_txt, tokenizer_lng, batch_size = per_replica_batch_size))
+            lambda _: get_dataset(per_replica_batch_size))
 
     else:
         model = setup_model_finetuning(path_to_pretrained, tokenizer_en, tokenizer_lng)
-        train_dataset = CreateDataset(train_ids, df_txt, tokenizer_lng, batch_size=train_batch_size)
+        train_dataset =  get_dataset(train_batch_size)
 
  
 
     ###### MAIN TRAINING LOOP #########
 
     # setup needed parameters, objects 
-    training_loss = tf.keras.metrics.Mean('training_loss', dtype=tf.float32)
-    training_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
-        'training_accuracy', dtype=tf.float32)
-    optimizer = tfk.optimizers.Adam(learning_rate = lr)
+    # training_loss = tf.keras.metrics.Mean('training_loss', dtype=tf.float32)
+    # training_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
+    #     'training_accuracy', dtype=tf.float32)
+    # optimizer = tfk.optimizers.Adam(learning_rate = lr)
 
     @tf.function
     def train_step(iterator):
